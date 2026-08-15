@@ -1,0 +1,34 @@
+name: Build Android APK
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Add android platform
+        run: npx cap add android
+
+      - name: Sync web resource
+        run: npx cap sync
+
+      - name: Build debug APK
+        uses: capacitor-community/build-android-apk@v1
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: word-player-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
