@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单词听写播放器</title>
+<link rel="manifest" href="./manifest.json">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,-apple-system}
+body{background:#1a1d27;color:#eee;padding:16px;max-width:760px;margin:0 auto}
+h1{text-align:center;margin-bottom:16px;font-size:22px}
+.box{background:#272b38;padding:14px;border-radius:12px;margin-bottom:14px}
+textarea{width:100%;height:140px;background:#1e212c;color:#fff;border:1px solid #444;border-radius:8px;padding:10px;font-size:14px;resize:none}
+button{background:#3b82f6;color:#fff;border:none;padding:10px 12px;border-radius:8px;margin:3px;font-size:14px;cursor:pointer}
+button.danger{background:#ef4444}
+button.success{background:#10b981}
+button:active{opacity:0.8}
+.info{color:#aaa;font-size:13px;margin:8px 0}
+.card{background:#33394b;padding:24px;border-radius:12px;text-align:center;margin:14px 0}
+#en{font-size:32px;font-weight:bold;margin-bottom:10px}
+#cn{font-size:20px;color:#94a3b8;margin-top:10px}
+.hide-cn{visibility:hidden}
+.row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;align-items:center}
+input[type="range"]{width:150px}
+select{padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #555}
+
+/*弹窗样式*/
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);display:none;padding:20px;overflow:auto}
+.modal-content{max-width:640px;margin:0 auto;background:#272b38;padding:16px;border-radius:12px}
+.modal h3{margin-bottom:12px}
+.word-item{padding:6px 0;border-bottom:1px solid #444}
+</style>
+</head>
+<body>
+<h1>单词听写播放器</h1>
+
+<div class="box">
+<div class="info">格式：单词,n.释义，一行一个；复制全部粘贴到文本框，点导入词表</div>
+<textarea id="ta" placeholder="example,n.例子
+doctor,n.医生
+teacher,n.老师"></textarea>
+<div class="row">
+<button onclick="loadWords()">导入词表</button>
+<button onclick="exportTxt()">导出TXT备份</button>
+<button onclick="showWordList()">查看全部词表</button>
+<button class="danger" onclick="clearAll()">清空全部词表</button>
+</div>
+</div>
+
+<div class="box">
+<div class="row">
+<span>选择语音：</span>
+<select id="voiceSelect"></select>
+</div>
+<div class="row">
+<span>语速:</span>
+<input type="range" id="rate" min="0.6" max="1.4" step="0.05" value="1">
+<span id="rateVal">1.00</span>
+</div>
+<div class="row">
+<span>播放间隔(秒):</span>
+<input type="range" id="gap" min="2" max="12" step="0.5" value="5">
+<span id="gapVal">5</span>
+</div>
+<div class="row">
+<button onclick="playRandom()">随机朗读</button>
+<button onclick="autoPlayStart()" class="success">自动循环播放</button>
+<button onclick="stopVoice()">停止</button>
+</div>
+<div class="row">
+<button onclick="prevOne()">上一个</button>
+<button onclick="showNext()">下一个</button>
+<button onclick="toggleHideCn()">默写模式【隐藏中文】</button>
+</div>
+<div class="info">当前第 <span id="idx">0</span> / <span id="total">0</span>
+<span id="autoStatus">｜自动播放：关闭</span></div>
+
+<div class="card">
+<div id="en">—</div>
+<div id="cn">—</div>
+</div>
+</div>
+
+<!--查看词表弹窗-->
+<div class="modal" id="listModal">
+<div class="modal-content">
+<h3>全部单词列表</h3>
+<div id="listBox"></div>
+<button onclick="closeModal()">关闭</button>
+</div>
+</div>
+
+<script>
+let wordList = [];
+let current = 0;
+let autoTimer = null;
+let hideCnMode = false;
+let voiceList = [];
+
+//加载语音列表
+function loadVoices(){
+  voiceList = speechSynthesis.getVoices();
+  const sel = document.getElementById('voiceSelect');
+  sel.innerHTML = '';
+  voiceList.forEach((v,idx)=>{
+    const opt = document.createElement('option');
+    opt.textContent = v.name + " ("+v.lang+")";
+    opt.value = idx;
+    sel.appendChild(opt);
+  })
+}
+speechSynthesis.onvoiceschanged = loadVoices;
+
+window.onload = function(){
+  loadVoices();
+  const save = localStorage.getItem("wordData");
+  if(save){
+    wordList = JSON.parse(save);
+    updateUi();
+  }
+}
+
+function saveLocal(){
+  localStorage.setItem("wordData",JSON.stringify(wordList));
+}
+
+const rateInput = document.getElementById('rate');
+rateInput.oninput = ()=>{
+  document.getElementById('rateVal').textContent = rateInput.value;
+};
+const gapInput = document.getElementById('gap');
+gapInput.oninput = ()=>{
+  document.getElementById('gapVal').textContent = gapInput.value;
+};
+
+function loadWords(){
+  const txt = document.getElementById('ta').value.trim();
+  if(!txt){alert("请粘贴单词内容");return;}
+  wordList = [];
+  const lines = txt.split('\n');
+  for(let line of lines){
+    line = line.trim();
+    if(!line)continue;
+    const arr = line.split(',');
+    if(arr.length>=2){
+      wordList.push({en:arr[0].trim(),cn:arr.slice(1).join(',').trim()})
+    }
+  }
+  current = 0;
+  saveLocal();
+  updateUi();
+  alert(`成功导入 ${wordList.length} 个单词，本地已保存`);
+}
+
+function updateUi(){
+  document.getElementById('total').innerText = wordList.length;
+  document.getElementById('idx').innerText = current+1;
+  if(wordList[current]){
+    document.getElementById('en').innerText = wordList[current].en;
+    document.getElementById('cn').innerText = wordList[current].cn;
+    if(hideCnMode){
+      document.getElementById("cn").classList.add("hide-cn");
+    }else{
+      document.getElementById("cn").classList.remove("hide-cn");
+    }
+  }else{
+    document.getElementById('en').innerText = '—';
+    document.getElementById('cn').innerText = '—';
+  }
+}
+
+function speak(text){
+  window.speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  const voiceIdx = document.getElementById('voiceSelect').value;
+  if(voiceList[voiceIdx]) utt.voice = voiceList[voiceIdx];
+  utt.rate = Number(document.getElementById('rate').value);
+  window.speechSynthesis.speak(utt);
+}
+
+function stopVoice(){
+  window.speechSynthesis.cancel();
+  if(autoTimer){
+    clearInterval(autoTimer);
+    autoTimer=null;
+    document.getElementById("autoStatus").innerText = "｜自动播放：关闭";
+  }
+}
+
+function playRandom(){
+  if(wordList.length===0){alert("请先粘贴导入单词");return;}
+  current = Math.floor(Math.random()*wordList.length);
+  updateUi();
+  speak(wordList[current].en);
+}
+
+function prevOne(){
+  if(wordList.length===0)return;
+  current--;
+  if(current<0) current = wordList.length-1;
+  updateUi();
+  speak(wordList[current].en);
+}
+
+function showNext(){
+  if(wordList.length===0)return;
+  current++;
+  if(current>=wordList.length) current = 0;
+  updateUi();
+  speak(wordList[current].en);
+}
+
+function autoPlayStart(){
+  if(wordList.length===0){alert("请先粘贴导入单词");return;}
+  stopVoice();
+  const gapSec = Number(document.getElementById("gap").value)*1000;
+  playRandom();
+  document.getElementById("autoStatus").innerText = "｜自动播放：开启";
+  autoTimer = setInterval(()=>{
+    playRandom();
+  },gapSec);
+}
+
+function toggleHideCn(){
+  hideCnMode = !hideCnMode;
+  updateUi();
+}
+
+//弹窗查看全部单词
+function showWordList(){
+  const box = document.getElementById('listBox');
+  box.innerHTML = '';
+  if(wordList.length===0){
+    box.innerHTML = "<p>暂无单词</p>";
+  }else{
+    wordList.forEach((item,i)=>{
+      const div = document.createElement('div');
+      div.className = "word-item";
+      div.innerText = `${i+1}. ${item.en} — ${item.cn}`;
+      box.appendChild(div);
+    })
+  }
+  document.getElementById('listModal').style.display = 'block';
+}
+function closeModal(){
+  document.getElementById('listModal').style.display = 'none';
+}
+
+function exportTxt(){
+  if(wordList.length===0){alert("没有单词");return;}
+  let s = '';
+  for(let w of wordList){
+    s += `${w.en},${w.cn}\n`;
+  }
+  const blob = new Blob([s],{type:'text/plain;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = "单词备份.txt";
+  a.click();
+}
+
+function clearAll(){
+  if(!confirm("确认清空全部单词？"))return;
+  wordList=[];
+  current=0;
+  localStorage.removeItem("wordData");
+  document.getElementById('ta').value='';
+  stopVoice();
+  updateUi();
+}
+</script>
+</body>
+</html>
